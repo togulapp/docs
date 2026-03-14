@@ -1,0 +1,882 @@
+openapi: 3.1.0
+info:
+  title: Nori Feature Flag API
+  version: 1.0.0
+  description: Feature flag management API with evaluation engine, role-based authorization, and real-time SSE updates.
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+
+tags:
+  - name: Auth
+    description: Authentication endpoints
+  - name: Environments
+    description: Environment management
+  - name: Flags
+    description: Flag management
+  - name: Rules
+    description: Rule management
+  - name: Evaluate
+    description: Flag evaluation
+  - name: Stream
+    description: Real-time SSE updates
+  - name: Infrastructure
+    description: Health and metrics
+
+paths:
+  /api/v1/register:
+    post:
+      tags: [Auth]
+      summary: Register a new user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, username, password]
+              properties:
+                name:
+                  type: string
+                  example: Onur Kacmaz
+                username:
+                  type: string
+                  format: email
+                  example: onur@example.com
+                password:
+                  type: string
+                  format: password
+                  example: mypassword123
+      responses:
+        "200":
+          description: User created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/v1/login:
+    post:
+      tags: [Auth]
+      summary: Login and get JWT tokens
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username:
+                  type: string
+                  format: email
+                  example: onur@example.com
+                password:
+                  type: string
+                  format: password
+      responses:
+        "200":
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                    description: JWT access token (1h expiry)
+                  refresh_token:
+                    type: string
+                    description: JWT refresh token (30d expiry)
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/refresh-token:
+    post:
+      tags: [Auth]
+      summary: Refresh JWT token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
+      responses:
+        "200":
+          description: Tokens refreshed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                  refresh_token:
+                    type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/environments:
+    get:
+      tags: [Environments]
+      summary: List all environments
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Environments listed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  environments:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Environment"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Environments]
+      summary: Create an environment
+      description: Requires `admin` role.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key, name]
+              properties:
+                key:
+                  type: string
+                  example: production
+                name:
+                  type: string
+                  example: Production
+                description:
+                  type: string
+                  nullable: true
+                  example: Production environment
+      responses:
+        "200":
+          description: Environment created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  environment:
+                    $ref: "#/components/schemas/Environment"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/v1/flags:
+    get:
+      tags: [Flags]
+      summary: List all flags
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Flags listed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  flags:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Flag"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Flags]
+      summary: Create a flag
+      description: Requires `admin` role. Salt is auto-generated.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [environment_id, key, name]
+              properties:
+                environment_id:
+                  type: string
+                  format: uuid
+                key:
+                  type: string
+                  example: new-dashboard
+                name:
+                  type: string
+                  example: New Dashboard
+                description:
+                  type: string
+                  nullable: true
+                enabled:
+                  type: boolean
+                  default: true
+                default_value:
+                  type: boolean
+                  default: false
+      responses:
+        "200":
+          description: Flag created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  flag:
+                    $ref: "#/components/schemas/Flag"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Environment not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/v1/flags/{id}:
+    get:
+      tags: [Flags]
+      summary: Get a flag with its rules
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Flag with rules
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  flag:
+                    $ref: "#/components/schemas/Flag"
+                  rules:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Rule"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Flags]
+      summary: Update a flag
+      description: Requires `admin` role. Only provided fields are updated.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+                  nullable: true
+                enabled:
+                  type: boolean
+                default_value:
+                  type: boolean
+      responses:
+        "200":
+          description: Flag updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  flag:
+                    $ref: "#/components/schemas/Flag"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Flags]
+      summary: Delete a flag
+      description: Requires `admin` role. Cascades to rules.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Flag deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: boolean
+                    example: true
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/rules:
+    post:
+      tags: [Rules]
+      summary: Create a rule for a flag
+      description: |
+        Requires `admin` role.
+
+        **Rule types:**
+        - `boolean` — Always matches, returns `return_value`
+        - `attribute` — Matches when context attribute satisfies the operator
+        - `percentage` — Deterministic rollout based on `bucket_by` field hash
+
+        **Operators** (for `attribute` type): `eq`, `neq`, `in`, `not_in`, `contains`, `starts_with`, `ends_with`
+
+        **`value_json`**: JSON-encoded target value. String for eq/neq/contains/starts_with/ends_with, array of strings for in/not_in.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRuleRequest"
+            examples:
+              percentage_rollout:
+                summary: 50% rollout
+                value:
+                  flag_id: "550e8400-e29b-41d4-a716-446655440000"
+                  priority: 1
+                  rule_type: percentage
+                  rollout_percentage: 50
+                  bucket_by: user_id
+                  return_value: true
+              attribute_targeting:
+                summary: Country targeting
+                value:
+                  flag_id: "550e8400-e29b-41d4-a716-446655440000"
+                  priority: 1
+                  rule_type: attribute
+                  attribute: country
+                  operator: in
+                  value_json: '["TR","DE"]'
+                  bucket_by: user_id
+                  return_value: true
+              boolean_kill_switch:
+                summary: Kill switch (always on)
+                value:
+                  flag_id: "550e8400-e29b-41d4-a716-446655440000"
+                  priority: 1
+                  rule_type: boolean
+                  bucket_by: user_id
+                  return_value: false
+      responses:
+        "200":
+          description: Rule created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  rule:
+                    $ref: "#/components/schemas/Rule"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Flag not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/rules/{id}:
+    patch:
+      tags: [Rules]
+      summary: Update a rule
+      description: Requires `admin` role. Only provided fields are updated.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                priority:
+                  type: integer
+                attribute:
+                  type: string
+                  nullable: true
+                operator:
+                  type: string
+                  nullable: true
+                  enum: [eq, neq, in, not_in, contains, starts_with, ends_with]
+                value_json:
+                  type: string
+                  nullable: true
+                rollout_percentage:
+                  type: integer
+                  minimum: 0
+                  maximum: 100
+                  nullable: true
+                bucket_by:
+                  type: string
+                return_value:
+                  type: boolean
+                is_active:
+                  type: boolean
+      responses:
+        "200":
+          description: Rule updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  rule:
+                    $ref: "#/components/schemas/Rule"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Rules]
+      summary: Delete a rule
+      description: Requires `admin` role.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Rule deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: boolean
+                    example: true
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/evaluate:
+    post:
+      tags: [Evaluate]
+      summary: Evaluate a feature flag
+      description: |
+        Evaluates a flag against the provided context. Returns the flag's computed value based on its rules.
+
+        **Evaluation order:**
+        1. If flag is disabled → returns `default_value` with reason `disabled`
+        2. Active rules are checked in `priority` order (lowest first)
+        3. First matching rule determines the result with reason `rule_match`
+        4. If no rule matches → returns `default_value` with reason `default`
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [flag_key, environment_key]
+              properties:
+                flag_key:
+                  type: string
+                  example: new-dashboard
+                environment_key:
+                  type: string
+                  example: production
+                context:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  example:
+                    user_id: "user-123"
+                    country: "TR"
+                    plan: "premium"
+      responses:
+        "200":
+          description: Evaluation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EvaluateResponse"
+              examples:
+                rule_match:
+                  value:
+                    flag_key: new-dashboard
+                    enabled: true
+                    value: true
+                    reason: rule_match
+                disabled:
+                  value:
+                    flag_key: new-dashboard
+                    enabled: false
+                    value: false
+                    reason: disabled
+                default:
+                  value:
+                    flag_key: new-dashboard
+                    enabled: true
+                    value: false
+                    reason: default
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/stream:
+    get:
+      tags: [Stream]
+      summary: SSE stream of flag changes
+      description: |
+        Server-Sent Events endpoint. Sends real-time events when flags or rules are created, updated, or deleted.
+        Heartbeat comments are sent every 30 seconds to keep the connection alive.
+
+        **Event types:** `flag.created`, `flag.updated`, `flag.deleted`, `rule.created`, `rule.updated`, `rule.deleted`
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: SSE event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+              examples:
+                flag_updated:
+                  value: |
+                    data: {"type":"flag.updated","flag_key":"new-dashboard","environment_id":"...","version":0,"timestamp":1710432000}
+                heartbeat:
+                  value: ": heartbeat"
+
+  /healthz:
+    get:
+      tags: [Infrastructure]
+      summary: Liveness probe
+      responses:
+        "200":
+          description: Service is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+  /readyz:
+    get:
+      tags: [Infrastructure]
+      summary: Readiness probe
+      description: Checks database connectivity.
+      responses:
+        "200":
+          description: Service is ready
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  db:
+                    type: string
+                    example: connected
+        "503":
+          description: Service not ready
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: error
+                  db:
+                    type: string
+                    example: unavailable
+
+  /metrics:
+    get:
+      tags: [Infrastructure]
+      summary: Prometheus metrics
+      responses:
+        "200":
+          description: Prometheus metrics in text format
+          content:
+            text/plain:
+              schema:
+                type: string
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    ID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  schemas:
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        role:
+          type: string
+          enum: [admin, read_only]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Environment:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        key:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Flag:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        environment_id:
+          type: string
+          format: uuid
+        key:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        enabled:
+          type: boolean
+        default_value:
+          type: boolean
+        salt:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Rule:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        flag_id:
+          type: string
+          format: uuid
+        priority:
+          type: integer
+          description: Lower number = higher priority
+        rule_type:
+          type: string
+          enum: [boolean, attribute, percentage]
+        attribute:
+          type: string
+          nullable: true
+        operator:
+          type: string
+          nullable: true
+          enum: [eq, neq, in, not_in, contains, starts_with, ends_with]
+        value_json:
+          type: string
+          nullable: true
+          description: JSON-encoded target value
+        rollout_percentage:
+          type: integer
+          minimum: 0
+          maximum: 100
+          nullable: true
+        bucket_by:
+          type: string
+          default: user_id
+        return_value:
+          type: boolean
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateRuleRequest:
+      type: object
+      required: [flag_id, priority, rule_type, return_value]
+      properties:
+        flag_id:
+          type: string
+          format: uuid
+        priority:
+          type: integer
+        rule_type:
+          type: string
+          enum: [boolean, attribute, percentage]
+        attribute:
+          type: string
+          nullable: true
+        operator:
+          type: string
+          nullable: true
+          enum: [eq, neq, in, not_in, contains, starts_with, ends_with]
+        value_json:
+          type: string
+          nullable: true
+        rollout_percentage:
+          type: integer
+          minimum: 0
+          maximum: 100
+          nullable: true
+        bucket_by:
+          type: string
+          default: user_id
+        return_value:
+          type: boolean
+        is_active:
+          type: boolean
+          default: true
+
+    EvaluateResponse:
+      type: object
+      properties:
+        flag_key:
+          type: string
+        enabled:
+          type: boolean
+        value:
+          type: boolean
+        reason:
+          type: string
+          enum: [disabled, rule_match, default]
+
+    Error:
+      type: object
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
+          nullable: true
+
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: Missing or invalid authorization
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: Insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Conflict:
+      description: Resource already exists
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
