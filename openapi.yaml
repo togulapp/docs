@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Nori Feature Flag API
-  version: 1.0.0
+  version: 1.2.0
   description: Feature flag management API with evaluation engine, role-based authorization, and real-time SSE updates.
 
 servers:
