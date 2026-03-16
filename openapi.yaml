@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: Nori Feature Flag API
-  version: 1.2.0
-  description: Feature flag management API with evaluation engine, role-based authorization, and real-time SSE updates.
+  version: 1.9.0
+  description: Feature flag management API with organization-scoped permission-based authorization, machine-authenticated evaluation, billing and lifecycle flows, and first-pass multi-region event propagation.
 
 servers:
   - url: http://localhost:8080
@@ -11,6 +11,24 @@ servers:
 tags:
   - name: Auth
     description: Authentication endpoints
+  - name: Members
+    description: Organization member management
+  - name: Roles
+    description: Organization role and permission management
+  - name: Invitations
+    description: Organization invitation management
+  - name: API Keys
+    description: Environment API key management
+  - name: Usage
+    description: Usage metering and reporting
+  - name: Billing
+    description: Subscription and billing management
+  - name: Exports
+    description: Data export management
+  - name: Account Lifecycle
+    description: Account deletion request tracking
+  - name: Regions
+    description: Region registry and environment-region assignment
   - name: Environments
     description: Environment management
   - name: Flags
@@ -29,6 +47,7 @@ paths:
     post:
       tags: [Auth]
       summary: Register a new user
+      description: Creates the user, creates the initial organization with owner membership, and generates an email verification token.
       requestBody:
         required: true
         content:
@@ -66,7 +85,8 @@ paths:
   /api/v1/login:
     post:
       tags: [Auth]
-      summary: Login and get JWT tokens
+      summary: Login and get organization-scoped JWT tokens
+      description: Returns the current organization context and the caller's accessible organizations.
       requestBody:
         required: true
         content:
@@ -88,14 +108,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  token:
-                    type: string
-                    description: JWT access token (1h expiry)
-                  refresh_token:
-                    type: string
-                    description: JWT refresh token (30d expiry)
+                $ref: "#/components/schemas/SessionResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -106,7 +119,8 @@ paths:
   /api/v1/refresh-token:
     post:
       tags: [Auth]
-      summary: Refresh JWT token
+      summary: Refresh organization-scoped JWT token
+      description: Rotates the refresh token and returns an updated organization-scoped session payload.
       requestBody:
         required: true
         content:
@@ -123,19 +137,1030 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  token:
-                    type: string
-                  refresh_token:
-                    type: string
+                $ref: "#/components/schemas/SessionResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/verify-email:
+    post:
+      tags: [Auth]
+      summary: Verify email address
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+      responses:
+        "200":
+          description: Email verified
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  verified:
+                    type: boolean
+                    example: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/forgot-password:
+    post:
+      tags: [Auth]
+      summary: Request a password reset token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        "200":
+          description: Password reset flow started
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sent:
+                    type: boolean
+                    example: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/v1/reset-password:
+    post:
+      tags: [Auth]
+      summary: Reset password using a one-time token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, new_password]
+              properties:
+                token:
+                  type: string
+                new_password:
+                  type: string
+                  format: password
+      responses:
+        "200":
+          description: Password reset completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reset:
+                    type: boolean
+                    example: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/me:
+    get:
+      tags: [Auth]
+      summary: Get current user and organization context
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Current user and organization context
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: "#/components/schemas/User"
+                  current_organization:
+                    $ref: "#/components/schemas/OrganizationSummary"
+                  organizations:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/OrganizationSummary"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/me/switch-organization:
+    post:
+      tags: [Auth]
+      summary: Switch the current organization
+      description: Requires an active refresh token and returns a rotated organization-scoped session.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [organization_id, refresh_token]
+              properties:
+                organization_id:
+                  type: string
+                  format: uuid
+                refresh_token:
+                  type: string
+      responses:
+        "200":
+          description: Organization switched
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/logout:
+    post:
+      tags: [Auth]
+      summary: Logout and revoke the current session
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
+      responses:
+        "200":
+          description: Session revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  logged_out:
+                    type: boolean
+                    example: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/resend-verification:
+    post:
+      tags: [Auth]
+      summary: Resend email verification token
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Verification token generated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sent:
+                    type: boolean
+                    example: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/v1/billing/subscription:
+    get:
+      tags: [Billing]
+      summary: Get the current subscription and entitlements
+      description: Requires `billing.read` permission.
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Subscription summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  subscription:
+                    $ref: "#/components/schemas/SubscriptionSummary"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/billing/checkout:
+    post:
+      tags: [Billing]
+      summary: Create a Stripe checkout session for a paid plan
+      description: Requires `billing.write` permission.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [plan]
+              properties:
+                plan:
+                  type: string
+                  enum: [pro, enterprise]
+                success_url:
+                  type: string
+                  format: uri
+                cancel_url:
+                  type: string
+                  format: uri
+      responses:
+        "200":
+          description: Checkout session created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url:
+                    type: string
+                    format: uri
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          description: Billing provider error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/billing/portal:
+    post:
+      tags: [Billing]
+      summary: Create a Stripe billing portal session
+      description: Requires `billing.read` permission.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                return_url:
+                  type: string
+                  format: uri
+      responses:
+        "200":
+          description: Billing portal session created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url:
+                    type: string
+                    format: uri
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/v1/webhooks/stripe:
+    post:
+      tags: [Billing]
+      summary: Stripe webhook endpoint
+      description: Accepts Stripe webhook events, verifies signatures, and applies idempotent subscription synchronization.
+      parameters:
+        - name: Stripe-Signature
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Webhook accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  received:
+                    type: boolean
+                    example: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/exports/audit:
+    post:
+      tags: [Exports]
+      summary: Create an audit log export
+      description: Requires `exports.write` permission. The export is generated immediately and stored through the configured export storage backend.
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Audit export created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  export:
+                    $ref: "#/components/schemas/DataExport"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/exports/account-data:
+    post:
+      tags: [Exports]
+      summary: Create an account data export
+      description: Requires `exports.write` permission. Produces a snapshot of organization-scoped data excluding secrets.
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Account data export created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  export:
+                    $ref: "#/components/schemas/DataExport"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/exports:
+    get:
+      tags: [Exports]
+      summary: List export jobs for the current organization
+      description: Requires `exports.write` permission.
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Exports listed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  exports:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/DataExport"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/account-deletion:
+    post:
+      tags: [Account Lifecycle]
+      summary: Request account deletion
+      description: Requires `org.delete` permission. The request is recorded and scheduled; it does not immediately remove data.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  nullable: true
+      responses:
+        "200":
+          description: Account deletion requested
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  request:
+                    $ref: "#/components/schemas/AccountDeletionRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/regions:
+    get:
+      tags: [Regions]
+      summary: List active regions
+      description: Requires `org.read` permission.
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Regions listed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  regions:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Region"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    get:
+      tags: [Account Lifecycle]
+      summary: List account deletion requests for the current organization
+      description: Requires `org.delete` permission.
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Account deletion requests listed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  requests:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AccountDeletionRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/members:
+    get:
+      tags: [Members]
+      summary: List organization members
+      description: Requires `members.read` permission.
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Members listed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  members:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Member"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/members/{id}:
+    patch:
+      tags: [Members]
+      summary: Change a member's role
+      description: Requires `members.update` permission.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role_id]
+              properties:
+                role_id:
+                  type: string
+                  format: uuid
+      responses:
+        "200":
+          description: Member updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  member:
+                    $ref: "#/components/schemas/Member"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+    delete:
+      tags: [Members]
+      summary: Remove a member from the organization
+      description: Requires `members.remove` permission.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Member removed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: boolean
+                    example: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/v1/roles:
+    get:
+      tags: [Roles]
+      summary: List built-in and custom roles for the current organization
+      description: Requires `roles.read` permission.
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Roles listed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  roles:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Role"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Roles]
+      summary: Create a custom role
+      description: Requires `roles.create` permission.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key, name, permissions]
+              properties:
+                key:
+                  type: string
+                  example: release_manager
+                name:
+                  type: string
+                  example: Release Manager
+                permissions:
+                  type: array
+                  items:
+                    type: string
+                  example: [flags.read, flags.write, rules.read, rules.write]
+      responses:
+        "200":
+          description: Role created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  role:
+                    $ref: "#/components/schemas/Role"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/v1/roles/{id}:
+    patch:
+      tags: [Roles]
+      summary: Update a custom role
+      description: Requires `roles.update` permission. System roles cannot be modified.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                permissions:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        "200":
+          description: Role updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  role:
+                    $ref: "#/components/schemas/Role"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+    delete:
+      tags: [Roles]
+      summary: Delete a custom role
+      description: Requires `roles.delete` permission. Roles assigned to members cannot be deleted.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Role deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: boolean
+                    example: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/v1/invitations:
+    get:
+      tags: [Invitations]
+      summary: List organization invitations
+      description: Requires `members.read` permission.
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Invitations listed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  invitations:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Invitation"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Invitations]
+      summary: Create an organization invitation
+      description: Requires `members.invite` permission and an available seat under the current billing plan.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, role_id]
+              properties:
+                email:
+                  type: string
+                  format: email
+                role_id:
+                  type: string
+                  format: uuid
+                expires_in_hours:
+                  type: integer
+                  minimum: 1
+      responses:
+        "200":
+          description: Invitation created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  invitation:
+                    $ref: "#/components/schemas/Invitation"
+                  accept_token:
+                    type: string
+                    description: One-time invitation token returned once so API clients can deliver it to the recipient.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/v1/invitations/{id}:
+    delete:
+      tags: [Invitations]
+      summary: Delete an invitation
+      description: Requires `members.invite` permission.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Invitation deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: boolean
+                    example: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/invitations/accept:
+    post:
+      tags: [Invitations]
+      summary: Accept an invitation
+      description: Accepts an invitation token. If the invited email does not belong to an existing user, `name` and `password` are required to create the account inline.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+                name:
+                  type: string
+                password:
+                  type: string
+                  format: password
+      responses:
+        "200":
+          description: Invitation accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accepted:
+                    type: boolean
+                    example: true
+                  member:
+                    $ref: "#/components/schemas/Member"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/v1/api-keys:
+    get:
+      tags: [API Keys]
+      summary: List API keys for the current organization
+      description: Requires `api_keys.read` permission.
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: API keys listed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api_keys:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/APIKey"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [API Keys]
+      summary: Create an environment API key
+      description: Requires `api_keys.write` permission. Returns the plaintext secret exactly once.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [environment_id, name, scope]
+              properties:
+                environment_id:
+                  type: string
+                  format: uuid
+                name:
+                  type: string
+                scope:
+                  type: string
+                  enum: [server, sdk, stream]
+                expires_at:
+                  type: string
+                  format: date-time
+                  nullable: true
+      responses:
+        "200":
+          description: API key created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api_key:
+                    $ref: "#/components/schemas/APIKey"
+                  secret:
+                    type: string
+                    description: Plaintext secret shown only once at creation time.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/api-keys/{id}/rotate:
+    post:
+      tags: [API Keys]
+      summary: Rotate an API key
+      description: Requires `api_keys.write` permission. Returns a new plaintext secret and invalidates the previous key value.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                expires_at:
+                  type: string
+                  format: date-time
+                  nullable: true
+      responses:
+        "200":
+          description: API key rotated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api_key:
+                    $ref: "#/components/schemas/APIKey"
+                  secret:
+                    type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/api-keys/{id}:
+    delete:
+      tags: [API Keys]
+      summary: Revoke an API key
+      description: Requires `api_keys.delete` permission.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: API key revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: boolean
+                    example: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/usage:
+    get:
+      tags: [Usage]
+      summary: List usage rollups for the current organization
+      description: Requires `usage.read` permission.
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Usage rollups listed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  usage:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/UsageRollup"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /api/v1/environments:
     get:
       tags: [Environments]
-      summary: List all environments
+      summary: List environments in the current organization
       security:
         - BearerAuth: []
       responses:
@@ -154,8 +1179,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
     post:
       tags: [Environments]
-      summary: Create an environment
-      description: Requires `admin` role.
+      summary: Create an environment in the current organization
+      description: Requires `environments.write` permission.
       security:
         - BearerAuth: []
       requestBody:
@@ -193,10 +1218,56 @@ paths:
         "409":
           $ref: "#/components/responses/Conflict"
 
+  /api/v1/environments/{id}/regions:
+    patch:
+      tags: [Regions]
+      summary: Replace enabled secondary regions for an environment
+      description: Requires `environments.write` permission. The primary region remains implicitly enabled.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [region_ids]
+              properties:
+                region_ids:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+      responses:
+        "200":
+          description: Environment region assignments updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  environment_id:
+                    type: string
+                    format: uuid
+                  regions:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/EnvironmentRegionAssignment"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /api/v1/flags:
     get:
       tags: [Flags]
-      summary: List all flags
+      summary: List flags in the current organization
       security:
         - BearerAuth: []
       responses:
@@ -215,8 +1286,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
     post:
       tags: [Flags]
-      summary: Create a flag
-      description: Requires `admin` role. Salt is auto-generated.
+      summary: Create a flag in the current organization
+      description: Requires `flags.write` permission. The referenced environment must belong to the current organization. Salt is auto-generated.
       security:
         - BearerAuth: []
       requestBody:
@@ -271,7 +1342,7 @@ paths:
   /api/v1/flags/{id}:
     get:
       tags: [Flags]
-      summary: Get a flag with its rules
+      summary: Get a flag with its rules from the current organization
       security:
         - BearerAuth: []
       parameters:
@@ -297,7 +1368,7 @@ paths:
     patch:
       tags: [Flags]
       summary: Update a flag
-      description: Requires `admin` role. Only provided fields are updated.
+      description: Requires `flags.write` permission. Only provided fields are updated.
       security:
         - BearerAuth: []
       parameters:
@@ -335,7 +1406,7 @@ paths:
     delete:
       tags: [Flags]
       summary: Delete a flag
-      description: Requires `admin` role. Cascades to rules.
+      description: Requires `flags.delete` permission. Cascades to rules.
       security:
         - BearerAuth: []
       parameters:
@@ -361,7 +1432,7 @@ paths:
       tags: [Rules]
       summary: Create a rule for a flag
       description: |
-        Requires `admin` role.
+        Requires `rules.write` permission.
 
         **Rule types:**
         - `boolean` — Always matches, returns `return_value`
@@ -433,7 +1504,7 @@ paths:
     patch:
       tags: [Rules]
       summary: Update a rule
-      description: Requires `admin` role. Only provided fields are updated.
+      description: Requires `rules.write` permission. Only provided fields are updated.
       security:
         - BearerAuth: []
       parameters:
@@ -485,7 +1556,7 @@ paths:
     delete:
       tags: [Rules]
       summary: Delete a rule
-      description: Requires `admin` role.
+      description: Requires `rules.delete` permission.
       security:
         - BearerAuth: []
       parameters:
@@ -511,13 +1582,17 @@ paths:
       tags: [Evaluate]
       summary: Evaluate a feature flag
       description: |
-        Evaluates a flag against the provided context. Returns the flag's computed value based on its rules.
+        Evaluates a flag against the provided context. Requires an `X-API-Key` header with a `server` or `sdk` scoped environment key.
+        The current subscription must still have monthly evaluation quota available.
+        In non-primary regions, the target environment must be explicitly enabled for the current region.
 
         **Evaluation order:**
         1. If flag is disabled → returns `default_value` with reason `disabled`
         2. Active rules are checked in `priority` order (lowest first)
         3. First matching rule determines the result with reason `rule_match`
         4. If no rule matches → returns `default_value` with reason `default`
+      security:
+        - ApiKeyAuth: []
       requestBody:
         required: true
         content:
@@ -568,6 +1643,10 @@ paths:
                     reason: default
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -578,10 +1657,13 @@ paths:
       description: |
         Server-Sent Events endpoint. Sends real-time events when flags or rules are created, updated, or deleted.
         Heartbeat comments are sent every 30 seconds to keep the connection alive.
+        Events are scoped to resources in the caller's current organization for bearer auth, or to the API key's environment for `sdk`/`stream` keys.
+        Events are published through an outbox-driven propagation loop so secondary regions can consume changes asynchronously.
 
         **Event types:** `flag.created`, `flag.updated`, `flag.deleted`, `rule.created`, `rule.updated`, `rule.deleted`
       security:
         - BearerAuth: []
+        - ApiKeyAuth: []
       responses:
         "200":
           description: SSE event stream
@@ -663,6 +1745,12 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+      description: JWT access token for the caller's current organization membership and permission set.
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: Environment-scoped machine credential used for evaluate and SDK stream operations.
 
   parameters:
     ID:
@@ -688,6 +1776,10 @@ components:
         role:
           type: string
           enum: [admin, read_only]
+        email_verified_at:
+          type: string
+          format: date-time
+          nullable: true
         created_at:
           type: string
           format: date-time
@@ -695,10 +1787,333 @@ components:
           type: string
           format: date-time
 
+    OrganizationSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+        name:
+          type: string
+        role:
+          type: string
+          enum: [owner, admin, developer, analyst, viewer]
+
+    Role:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        key:
+          type: string
+        name:
+          type: string
+        is_system:
+          type: boolean
+        permissions:
+          type: array
+          items:
+            type: string
+
+    APIKey:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        organization_id:
+          type: string
+          format: uuid
+        environment_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        scope:
+          type: string
+          enum: [server, sdk, stream]
+        key_prefix:
+          type: string
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_used_ip:
+          type: string
+          nullable: true
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        revoked_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    UsageRollup:
+      type: object
+      properties:
+        metric:
+          type: string
+          example: evaluations
+        environment_id:
+          type: string
+          format: uuid
+          nullable: true
+        period_start:
+          type: string
+          format: date-time
+        period_granularity:
+          type: string
+          enum: [hour, day]
+        count:
+          type: integer
+
+    SubscriptionLimits:
+      type: object
+      properties:
+        environments:
+          type: integer
+        flags:
+          type: integer
+        seats:
+          type: integer
+        monthly_evaluations:
+          type: integer
+          format: int64
+
+    SubscriptionSummary:
+      type: object
+      properties:
+        provider:
+          type: string
+          example: stripe
+        plan:
+          type: string
+          enum: [free, pro, enterprise]
+        status:
+          type: string
+          enum: [active, trialing, past_due, canceled, suspended]
+        seats:
+          type: integer
+        limits:
+          $ref: "#/components/schemas/SubscriptionLimits"
+        provider_customer_id:
+          type: string
+          nullable: true
+        provider_subscription_id:
+          type: string
+          nullable: true
+        current_period_start:
+          type: string
+          format: date-time
+          nullable: true
+        current_period_end:
+          type: string
+          format: date-time
+          nullable: true
+        cancel_at_period_end:
+          type: boolean
+
+    DataExport:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        organization_id:
+          type: string
+          format: uuid
+        export_type:
+          type: string
+          enum: [audit, account_data]
+        status:
+          type: string
+          enum: [completed, failed, expired]
+        storage_path:
+          type: string
+        requested_by:
+          type: string
+          format: uuid
+          nullable: true
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    AccountDeletionRequest:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        organization_id:
+          type: string
+          format: uuid
+        requested_by:
+          type: string
+          format: uuid
+          nullable: true
+        reason:
+          type: string
+          nullable: true
+        scheduled_for:
+          type: string
+          format: date-time
+          nullable: true
+        processed_at:
+          type: string
+          format: date-time
+          nullable: true
+        status:
+          type: string
+          enum: [requested, processed]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Region:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        key:
+          type: string
+        name:
+          type: string
+        is_primary:
+          type: boolean
+        status:
+          type: string
+          enum: [active, disabled]
+        public_base_url:
+          type: string
+          nullable: true
+
+    EnvironmentRegionAssignment:
+      type: object
+      properties:
+        region_id:
+          type: string
+          format: uuid
+        key:
+          type: string
+        name:
+          type: string
+        is_primary:
+          type: boolean
+        status:
+          type: string
+          enum: [active, disabled]
+        public_base_url:
+          type: string
+          nullable: true
+        is_enabled:
+          type: boolean
+
+    MemberUser:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        email_verified_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    Member:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user:
+          $ref: "#/components/schemas/MemberUser"
+        role:
+          $ref: "#/components/schemas/Role"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Invitation:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        role:
+          $ref: "#/components/schemas/Role"
+        invited_by:
+          type: string
+          format: uuid
+          nullable: true
+        expires_at:
+          type: string
+          format: date-time
+        accepted_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    SessionResponse:
+      type: object
+      properties:
+        token:
+          type: string
+          description: JWT access token (1h expiry) scoped to the current organization membership
+        refresh_token:
+          type: string
+          description: JWT refresh token (30d expiry) that reissues organization-scoped tokens
+        user:
+          $ref: "#/components/schemas/User"
+        current_organization:
+          $ref: "#/components/schemas/OrganizationSummary"
+        organizations:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrganizationSummary"
+
     Environment:
       type: object
       properties:
         id:
+          type: string
+          format: uuid
+        organization_id:
           type: string
           format: uuid
         key:
