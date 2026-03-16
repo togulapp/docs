@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: Nori Feature Flag API
-  version: 1.9.0
-  description: Feature flag management API with organization-scoped permission-based authorization, machine-authenticated evaluation, billing and lifecycle flows, and first-pass multi-region event propagation.
+  version: 1.10.0
+  description: Feature flag management API with organization-scoped permission-based authorization, machine-authenticated evaluation, billing and lifecycle flows, and automatic multi-region assignment.
 
 servers:
   - url: http://localhost:8080
@@ -27,8 +27,6 @@ tags:
     description: Data export management
   - name: Account Lifecycle
     description: Account deletion request tracking
-  - name: Regions
-    description: Region registry and environment-region assignment
   - name: Environments
     description: Environment management
   - name: Flags
@@ -553,6 +551,28 @@ paths:
           $ref: "#/components/responses/Forbidden"
 
   /api/v1/account-deletion:
+    get:
+      tags: [Account Lifecycle]
+      summary: List account deletion requests for the current organization
+      description: Requires `org.delete` permission.
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Account deletion requests listed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  requests:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AccountDeletionRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     post:
       tags: [Account Lifecycle]
       summary: Request account deletion
@@ -584,51 +604,6 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
-  /api/v1/regions:
-    get:
-      tags: [Regions]
-      summary: List active regions
-      description: Requires `org.read` permission.
-      security:
-        - BearerAuth: []
-      responses:
-        "200":
-          description: Regions listed
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  regions:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/Region"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-    get:
-      tags: [Account Lifecycle]
-      summary: List account deletion requests for the current organization
-      description: Requires `org.delete` permission.
-      security:
-        - BearerAuth: []
-      responses:
-        "200":
-          description: Account deletion requests listed
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  requests:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/AccountDeletionRequest"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
 
   /api/v1/members:
     get:
@@ -1180,7 +1155,7 @@ paths:
     post:
       tags: [Environments]
       summary: Create an environment in the current organization
-      description: Requires `environments.write` permission.
+      description: Requires `environments.write` permission. The current region is automatically assigned to the new environment.
       security:
         - BearerAuth: []
       requestBody:
@@ -1218,49 +1193,29 @@ paths:
         "409":
           $ref: "#/components/responses/Conflict"
 
-  /api/v1/environments/{id}/regions:
-    patch:
-      tags: [Regions]
-      summary: Replace enabled secondary regions for an environment
-      description: Requires `environments.write` permission. The primary region remains implicitly enabled.
+  /api/v1/environments/{id}:
+    get:
+      tags: [Environments]
+      summary: Get a single environment
+      description: Requires `environments.read` permission.
       security:
         - BearerAuth: []
       parameters:
         - $ref: "#/components/parameters/ID"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [region_ids]
-              properties:
-                region_ids:
-                  type: array
-                  items:
-                    type: string
-                    format: uuid
       responses:
         "200":
-          description: Environment region assignments updated
+          description: Environment details
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  environment_id:
-                    type: string
-                    format: uuid
-                  regions:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/EnvironmentRegionAssignment"
+                  environment:
+                    $ref: "#/components/schemas/Environment"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -1989,46 +1944,6 @@ components:
         updated_at:
           type: string
           format: date-time
-
-    Region:
-      type: object
-      properties:
-        id:
-          type: string
-          format: uuid
-        key:
-          type: string
-        name:
-          type: string
-        is_primary:
-          type: boolean
-        status:
-          type: string
-          enum: [active, disabled]
-        public_base_url:
-          type: string
-          nullable: true
-
-    EnvironmentRegionAssignment:
-      type: object
-      properties:
-        region_id:
-          type: string
-          format: uuid
-        key:
-          type: string
-        name:
-          type: string
-        is_primary:
-          type: boolean
-        status:
-          type: string
-          enum: [active, disabled]
-        public_base_url:
-          type: string
-          nullable: true
-        is_enabled:
-          type: boolean
 
     MemberUser:
       type: object
