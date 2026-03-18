@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Nori Feature Flag API
-  version: 1.10.0
+  version: 1.11.0
   description: Feature flag management API with organization-scoped permission-based authorization, machine-authenticated evaluation, billing and lifecycle flows, and automatic multi-region assignment.
 
 servers:
@@ -11,6 +11,8 @@ servers:
 tags:
   - name: Auth
     description: Authentication endpoints
+  - name: Organizations
+    description: Organization management
   - name: Members
     description: Organization member management
   - name: Roles
@@ -604,6 +606,122 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+
+  /api/v1/organizations:
+    post:
+      tags: [Organizations]
+      summary: Create a new organization
+      description: Creates a new organization and assigns the caller as the owner. No organization-level permission is required since this is a user-level action.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  example: Acme Corp
+      responses:
+        "200":
+          description: Organization created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  organization:
+                    $ref: "#/components/schemas/OrganizationSummary"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/organizations/current:
+    get:
+      tags: [Organizations]
+      summary: Get current organization details
+      description: Requires `org.read` permission.
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Organization details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganizationDetail"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Organizations]
+      summary: Update current organization
+      description: Requires `org.update` permission. Only provided fields are updated.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  example: Acme Corp Updated
+      responses:
+        "200":
+          description: Organization updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganizationDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/organizations/{id}:
+    delete:
+      tags: [Organizations]
+      summary: Delete an organization by ID
+      description: Requires `org.delete` permission. The caller must be a member of the target organization and must belong to at least one other organization; deleting the last organization is not allowed. Uses soft delete — data is retained but inaccessible.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Organization deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: boolean
+                    example: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
 
   /api/v1/members:
     get:
@@ -1218,6 +1336,33 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Environments]
+      summary: Delete an environment
+      description: Requires `environments.delete` permission. Cascades to flags, environment API keys, region assignments, and queued events.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Environment deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: boolean
+                    example: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /api/v1/flags:
     get:
@@ -1755,6 +1900,23 @@ components:
         role:
           type: string
           enum: [owner, admin, developer, analyst, viewer]
+
+    OrganizationDetail:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+        name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
 
     Role:
       type: object
