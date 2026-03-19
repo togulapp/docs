@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: Togul Feature Flag API
-  version: 1.12.0
-  description: Feature flag management API with organization-scoped permission-based authorization, machine-authenticated evaluation, billing and lifecycle flows, and automatic multi-region assignment.
+  version: 1.13.0
+  description: Feature flag management API with organization-scoped permission-based authorization, project-based resource grouping, machine-authenticated evaluation, billing and lifecycle flows, and automatic multi-region assignment.
 
 servers:
   - url: http://localhost:8080
@@ -19,8 +19,12 @@ tags:
     description: Organization role and permission management
   - name: Invitations
     description: Organization invitation management
+  - name: Projects
+    description: Project management (workspace layer between Organization and Environment)
+  - name: Project Members
+    description: Project membership management
   - name: API Keys
-    description: Environment API key management
+    description: Project-scoped API key management
   - name: Usage
     description: Usage metering and reporting
   - name: Billing
@@ -1089,13 +1093,15 @@ paths:
         "409":
           $ref: "#/components/responses/Conflict"
 
-  /api/v1/api-keys:
+  /api/v1/projects/{project_id}/api-keys:
     get:
       tags: [API Keys]
-      summary: List API keys for the current organization
+      summary: List API keys for a project
       description: Requires `api_keys.read` permission.
       security:
         - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
       responses:
         "200":
           description: API keys listed
@@ -1114,10 +1120,12 @@ paths:
           $ref: "#/components/responses/Forbidden"
     post:
       tags: [API Keys]
-      summary: Create an environment API key
+      summary: Create a project API key
       description: Requires `api_keys.write` permission. Returns the plaintext secret exactly once.
       security:
         - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
       requestBody:
         required: true
         content:
@@ -1158,7 +1166,7 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
-  /api/v1/api-keys/{id}/rotate:
+  /api/v1/projects/{project_id}/api-keys/{id}/rotate:
     post:
       tags: [API Keys]
       summary: Rotate an API key
@@ -1166,6 +1174,7 @@ paths:
       security:
         - BearerAuth: []
       parameters:
+        - $ref: "#/components/parameters/ProjectID"
         - $ref: "#/components/parameters/ID"
       requestBody:
         required: false
@@ -1199,7 +1208,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
-  /api/v1/api-keys/{id}:
+  /api/v1/projects/{project_id}/api-keys/{id}:
     delete:
       tags: [API Keys]
       summary: Revoke an API key
@@ -1207,6 +1216,7 @@ paths:
       security:
         - BearerAuth: []
       parameters:
+        - $ref: "#/components/parameters/ProjectID"
         - $ref: "#/components/parameters/ID"
       responses:
         "200":
@@ -1221,6 +1231,286 @@ paths:
                     example: true
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/projects:
+    get:
+      tags: [Projects]
+      summary: List projects in the current organization
+      description: |
+        Requires `projects.read` permission.
+        Owner/admin see all projects; other roles see only projects they are a member of.
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Projects listed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  projects:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Project"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Projects]
+      summary: Create a project in the current organization
+      description: Requires `projects.write` permission. Slug is auto-generated from the name.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  example: My Project
+                description:
+                  type: string
+                  nullable: true
+                  example: Main product feature flags
+      responses:
+        "200":
+          description: Project created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  project:
+                    $ref: "#/components/schemas/Project"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/v1/projects/{project_id}:
+    get:
+      tags: [Projects]
+      summary: Get a project
+      description: Requires `projects.read` permission.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+      responses:
+        "200":
+          description: Project details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  project:
+                    $ref: "#/components/schemas/Project"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Projects]
+      summary: Update a project
+      description: Requires `projects.write` permission.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+                  nullable: true
+      responses:
+        "200":
+          description: Project updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  project:
+                    $ref: "#/components/schemas/Project"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Projects]
+      summary: Delete a project
+      description: Requires `projects.delete` permission. Cascades to environments, flags, rules, API keys, and members.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+      responses:
+        "200":
+          description: Project deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: boolean
+                    example: true
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/projects/{project_id}/members:
+    get:
+      tags: [Project Members]
+      summary: List members of a project
+      description: Requires `project_members.read` permission.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+      responses:
+        "200":
+          description: Project members listed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  members:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ProjectMember"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Project Members]
+      summary: Add a member to a project
+      description: Requires `project_members.write` permission. The user must already be an organization member.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id, role_id]
+              properties:
+                user_id:
+                  type: string
+                  format: uuid
+                role_id:
+                  type: string
+                  format: uuid
+      responses:
+        "200":
+          description: Member added
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  member:
+                    $ref: "#/components/schemas/ProjectMember"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/v1/projects/{project_id}/members/{member_id}:
+    patch:
+      tags: [Project Members]
+      summary: Update a project member's role
+      description: Requires `project_members.write` permission.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+        - name: member_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role_id]
+              properties:
+                role_id:
+                  type: string
+                  format: uuid
+      responses:
+        "200":
+          description: Member updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  member:
+                    $ref: "#/components/schemas/ProjectMember"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Project Members]
+      summary: Remove a member from a project
+      description: Requires `project_members.remove` permission.
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
+        - name: member_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Member removed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  removed:
+                    type: boolean
+                    example: true
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
@@ -1250,12 +1540,14 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
-  /api/v1/environments:
+  /api/v1/projects/{project_id}/environments:
     get:
       tags: [Environments]
-      summary: List environments in the current organization
+      summary: List environments in a project
       security:
         - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
       responses:
         "200":
           description: Environments listed
@@ -1272,10 +1564,12 @@ paths:
           $ref: "#/components/responses/Unauthorized"
     post:
       tags: [Environments]
-      summary: Create an environment in the current organization
+      summary: Create an environment in a project
       description: Requires `environments.write` permission. The current region is automatically assigned to the new environment.
       security:
         - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
       requestBody:
         required: true
         content:
@@ -1311,7 +1605,7 @@ paths:
         "409":
           $ref: "#/components/responses/Conflict"
 
-  /api/v1/environments/{id}:
+  /api/v1/projects/{project_id}/environments/{id}:
     get:
       tags: [Environments]
       summary: Get a single environment
@@ -1319,6 +1613,7 @@ paths:
       security:
         - BearerAuth: []
       parameters:
+        - $ref: "#/components/parameters/ProjectID"
         - $ref: "#/components/parameters/ID"
       responses:
         "200":
@@ -1343,6 +1638,7 @@ paths:
       security:
         - BearerAuth: []
       parameters:
+        - $ref: "#/components/parameters/ProjectID"
         - $ref: "#/components/parameters/ID"
       responses:
         "200":
@@ -1364,12 +1660,14 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
-  /api/v1/flags:
+  /api/v1/projects/{project_id}/flags:
     get:
       tags: [Flags]
-      summary: List flags in the current organization
+      summary: List flags in a project
       security:
         - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
       responses:
         "200":
           description: Flags listed
@@ -1386,8 +1684,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
     post:
       tags: [Flags]
-      summary: Create a flag in the current organization
-      description: Requires `flags.write` permission. The referenced environment must belong to the current organization. Salt is auto-generated.
+      summary: Create a flag in a project
+      description: Requires `flags.write` permission. The referenced environment must belong to the current project. Salt is auto-generated.
       security:
         - BearerAuth: []
       requestBody:
@@ -1439,13 +1737,14 @@ paths:
         "409":
           $ref: "#/components/responses/Conflict"
 
-  /api/v1/flags/{id}:
+  /api/v1/projects/{project_id}/flags/{id}:
     get:
       tags: [Flags]
-      summary: Get a flag with its rules from the current organization
+      summary: Get a flag with its rules from a project
       security:
         - BearerAuth: []
       parameters:
+        - $ref: "#/components/parameters/ProjectID"
         - $ref: "#/components/parameters/ID"
       responses:
         "200":
@@ -1472,6 +1771,7 @@ paths:
       security:
         - BearerAuth: []
       parameters:
+        - $ref: "#/components/parameters/ProjectID"
         - $ref: "#/components/parameters/ID"
       requestBody:
         required: true
@@ -1510,6 +1810,7 @@ paths:
       security:
         - BearerAuth: []
       parameters:
+        - $ref: "#/components/parameters/ProjectID"
         - $ref: "#/components/parameters/ID"
       responses:
         "200":
@@ -1527,7 +1828,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
-  /api/v1/rules:
+  /api/v1/projects/{project_id}/rules:
     post:
       tags: [Rules]
       summary: Create a rule for a flag
@@ -1544,6 +1845,8 @@ paths:
         **`value_json`**: JSON-encoded target value. String for eq/neq/contains/starts_with/ends_with, array of strings for in/not_in.
       security:
         - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProjectID"
       requestBody:
         required: true
         content:
@@ -1600,7 +1903,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
-  /api/v1/rules/{id}:
+  /api/v1/projects/{project_id}/rules/{id}:
     patch:
       tags: [Rules]
       summary: Update a rule
@@ -1608,6 +1911,7 @@ paths:
       security:
         - BearerAuth: []
       parameters:
+        - $ref: "#/components/parameters/ProjectID"
         - $ref: "#/components/parameters/ID"
       requestBody:
         required: true
@@ -1660,6 +1964,7 @@ paths:
       security:
         - BearerAuth: []
       parameters:
+        - $ref: "#/components/parameters/ProjectID"
         - $ref: "#/components/parameters/ID"
       responses:
         "200":
@@ -1861,6 +2166,15 @@ components:
         type: string
         format: uuid
 
+    ProjectID:
+      name: project_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: The project (workspace) ID
+
   schemas:
     User:
       type: object
@@ -1935,13 +2249,57 @@ components:
           items:
             type: string
 
-    APIKey:
+    Project:
       type: object
       properties:
         id:
           type: string
           format: uuid
         organization_id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ProjectMember:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        role_id:
+          type: string
+          format: uuid
+        role:
+          $ref: "#/components/schemas/Role"
+        created_at:
+          type: string
+          format: date-time
+
+    APIKey:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        project_id:
           type: string
           format: uuid
         environment_id:
@@ -2190,7 +2548,7 @@ components:
         id:
           type: string
           format: uuid
-        organization_id:
+        project_id:
           type: string
           format: uuid
         key:
