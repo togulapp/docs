@@ -249,18 +249,36 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  user:
-                    $ref: "#/components/schemas/User"
-                  current_organization:
-                    $ref: "#/components/schemas/OrganizationSummary"
-                  organizations:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/OrganizationSummary"
+                $ref: "#/components/schemas/MeResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
+    patch:
+      tags: [Auth]
+      summary: Update current user account details
+      description: |
+        Updates the authenticated user's account profile.
+        Changing the email address clears `email_verified_at` and sends a fresh verification email.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateMeRequest"
+      responses:
+        "200":
+          description: Account updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateMeResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
 
   /api/v1/me/switch-organization:
     post:
@@ -372,6 +390,38 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /api/v1/pricing/plans:
+    get:
+      tags: [Billing]
+      summary: Get the public pricing plan catalog
+      description: Returns pricing-plan information without requiring authentication or current subscription context.
+      responses:
+        "200":
+          description: Public billing plan catalog
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicBillingPlansResponse"
+
+  /api/v1/billing/plans:
+    get:
+      tags: [Billing]
+      summary: Get the billing plan catalog and current-plan actions
+      description: Requires `billing.read` permission.
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Billing plan catalog
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingPlansResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  
   /api/v1/billing/checkout:
     post:
       tags: [Billing]
@@ -1540,6 +1590,122 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /api/v1/usage/overview:
+    get:
+      tags: [Usage]
+      summary: Get usage overview for the current organization
+      description: |
+        Requires `usage.read` permission.
+        Returns evaluation usage for the selected range together with the current month's quota snapshot.
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: from
+          schema:
+            type: string
+          description: Inclusive start day. Accepts RFC3339 or `YYYY-MM-DD`. Defaults to the current UTC month start.
+          example: "2026-03-01"
+        - in: query
+          name: to
+          schema:
+            type: string
+          description: Inclusive end day. Accepts RFC3339 or `YYYY-MM-DD`. Defaults to today in UTC.
+          example: "2026-03-20"
+      responses:
+        "200":
+          description: Usage overview returned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UsageOverview"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/usage/timeseries:
+    get:
+      tags: [Usage]
+      summary: Get daily usage timeseries for the current organization
+      description: |
+        Requires `usage.read` permission.
+        Returns evaluation counts bucketed by day and fills missing days with zeroes.
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: from
+          schema:
+            type: string
+          description: Inclusive start day. Accepts RFC3339 or `YYYY-MM-DD`. Defaults to the current UTC month start.
+          example: "2026-03-01"
+        - in: query
+          name: to
+          schema:
+            type: string
+          description: Inclusive end day. Accepts RFC3339 or `YYYY-MM-DD`. Defaults to today in UTC.
+          example: "2026-03-20"
+      responses:
+        "200":
+          description: Usage timeseries returned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UsageTimeseries"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/usage/environments:
+    get:
+      tags: [Usage]
+      summary: Get top environments by usage for the current organization
+      description: |
+        Requires `usage.read` permission.
+        Returns evaluation totals by environment for the selected range, including project metadata when available.
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: from
+          schema:
+            type: string
+          description: Inclusive start day. Accepts RFC3339 or `YYYY-MM-DD`. Defaults to the current UTC month start.
+          example: "2026-03-01"
+        - in: query
+          name: to
+          schema:
+            type: string
+          description: Inclusive end day. Accepts RFC3339 or `YYYY-MM-DD`. Defaults to today in UTC.
+          example: "2026-03-20"
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 10
+          description: Maximum number of environments to return.
+      responses:
+        "200":
+          description: Usage environment breakdown returned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UsageEnvironments"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /api/v1/projects/{project_id}/environments:
     get:
       tags: [Environments]
@@ -2353,6 +2519,172 @@ components:
         count:
           type: integer
 
+    UsageRange:
+      type: object
+      properties:
+        from:
+          type: string
+          format: date-time
+        to:
+          type: string
+          format: date-time
+        days:
+          type: integer
+
+    UsageOverviewSummary:
+      type: object
+      properties:
+        total:
+          type: integer
+          format: int64
+        previous_total:
+          type: integer
+          format: int64
+        change_total:
+          type: integer
+          format: int64
+        change_percent:
+          type: number
+          format: double
+          nullable: true
+        average_per_day:
+          type: number
+          format: double
+        projected_month_end:
+          type: integer
+          format: int64
+          nullable: true
+
+    UsageMonthlyQuota:
+      type: object
+      properties:
+        period_start:
+          type: string
+          format: date-time
+        period_end_exclusive:
+          type: string
+          format: date-time
+        used:
+          type: integer
+          format: int64
+        included:
+          type: integer
+          format: int64
+          nullable: true
+        remaining:
+          type: integer
+          format: int64
+          nullable: true
+        percent_used:
+          type: number
+          format: double
+          nullable: true
+        is_unlimited:
+          type: boolean
+
+    UsageOverview:
+      type: object
+      properties:
+        metric:
+          type: string
+          example: evaluations
+        range:
+          $ref: "#/components/schemas/UsageRange"
+        summary:
+          $ref: "#/components/schemas/UsageOverviewSummary"
+        monthly_quota:
+          $ref: "#/components/schemas/UsageMonthlyQuota"
+
+    UsageTimeseriesPoint:
+      type: object
+      properties:
+        period_start:
+          type: string
+          format: date-time
+        count:
+          type: integer
+          format: int64
+
+    UsageTimeseriesSummary:
+      type: object
+      properties:
+        total:
+          type: integer
+          format: int64
+        average_per_day:
+          type: number
+          format: double
+        peak_count:
+          type: integer
+          format: int64
+        peak_period_start:
+          type: string
+          format: date-time
+          nullable: true
+
+    UsageTimeseries:
+      type: object
+      properties:
+        metric:
+          type: string
+          example: evaluations
+        granularity:
+          type: string
+          enum: [day]
+        range:
+          $ref: "#/components/schemas/UsageRange"
+        summary:
+          $ref: "#/components/schemas/UsageTimeseriesSummary"
+        points:
+          type: array
+          items:
+            $ref: "#/components/schemas/UsageTimeseriesPoint"
+
+    UsageEnvironmentSummary:
+      type: object
+      properties:
+        project_id:
+          type: string
+          format: uuid
+          nullable: true
+        project_slug:
+          type: string
+          nullable: true
+        project_name:
+          type: string
+          nullable: true
+        environment_id:
+          type: string
+          format: uuid
+          nullable: true
+        environment_key:
+          type: string
+          nullable: true
+        environment_name:
+          type: string
+        count:
+          type: integer
+          format: int64
+        share_percent:
+          type: number
+          format: double
+
+    UsageEnvironments:
+      type: object
+      properties:
+        metric:
+          type: string
+          example: evaluations
+        range:
+          $ref: "#/components/schemas/UsageRange"
+        total:
+          type: integer
+          format: int64
+        environments:
+          type: array
+          items:
+            $ref: "#/components/schemas/UsageEnvironmentSummary"
+
     SubscriptionLimits:
       type: object
       properties:
@@ -2365,6 +2697,85 @@ components:
         monthly_evaluations:
           type: integer
           format: int64
+
+    BillingPlan:
+      type: object
+      properties:
+        key:
+          type: string
+          enum: [free, pro, enterprise]
+        name:
+          type: string
+        price:
+          $ref: "#/components/schemas/BillingPlanPrice"
+        limits:
+          $ref: "#/components/schemas/SubscriptionLimits"
+        is_paid:
+          type: boolean
+        is_current:
+          type: boolean
+        recommended:
+          type: boolean
+        checkout_enabled:
+          type: boolean
+        action:
+          type: string
+          enum: [current, checkout, manage_subscription, unavailable]
+
+    PublicBillingPlan:
+      type: object
+      properties:
+        key:
+          type: string
+          enum: [free, pro, enterprise]
+        name:
+          type: string
+        price:
+          $ref: "#/components/schemas/BillingPlanPrice"
+        limits:
+          $ref: "#/components/schemas/SubscriptionLimits"
+        is_paid:
+          type: boolean
+        recommended:
+          type: boolean
+        checkout_enabled:
+          type: boolean
+
+    BillingPlanPrice:
+      type: object
+      nullable: true
+      properties:
+        price_id:
+          type: string
+        unit_amount:
+          type: integer
+          format: int64
+        currency:
+          type: string
+        interval:
+          type: string
+        interval_count:
+          type: integer
+
+    PublicBillingPlansResponse:
+      type: object
+      properties:
+        plans:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicBillingPlan"
+
+    BillingPlansResponse:
+      type: object
+      properties:
+        current_subscription:
+          $ref: "#/components/schemas/SubscriptionSummary"
+        billing_portal_available:
+          type: boolean
+        plans:
+          type: array
+          items:
+            $ref: "#/components/schemas/BillingPlan"
 
     SubscriptionSummary:
       type: object
@@ -2380,6 +2791,13 @@ components:
           enum: [active, trialing, past_due, canceled, suspended]
         seats:
           type: integer
+        used_seats:
+          type: integer
+          format: int64
+        remaining_seats:
+          type: integer
+          format: int64
+          nullable: true
         limits:
           $ref: "#/components/schemas/SubscriptionLimits"
         provider_customer_id:
@@ -2393,6 +2811,10 @@ components:
           format: date-time
           nullable: true
         current_period_end:
+          type: string
+          format: date-time
+          nullable: true
+        renewal_date:
           type: string
           format: date-time
           nullable: true
@@ -2541,6 +2963,45 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/OrganizationSummary"
+
+    MeResponse:
+      type: object
+      properties:
+        user:
+          $ref: "#/components/schemas/User"
+        current_organization:
+          $ref: "#/components/schemas/OrganizationSummary"
+        organizations:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrganizationSummary"
+
+    UpdateMeRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          nullable: true
+          example: Jane Doe
+        email:
+          type: string
+          format: email
+          nullable: true
+          example: jane@example.com
+
+    UpdateMeResponse:
+      type: object
+      properties:
+        user:
+          $ref: "#/components/schemas/User"
+        current_organization:
+          $ref: "#/components/schemas/OrganizationSummary"
+        organizations:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrganizationSummary"
+        verification_sent:
+          type: boolean
 
     Environment:
       type: object
