@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: Togul Feature Flag API
-  version: 1.13.0
-  description: Feature flag management API with organization-scoped permission-based authorization, project-based resource grouping, machine-authenticated evaluation, billing and lifecycle flows, and automatic multi-region assignment.
+  version: 1.14.0
+  description: Feature flag management API with organization-scoped permission-based authorization, project-based resource grouping, machine-authenticated evaluation, multi-provider billing (Stripe and LemonSqueezy), lifecycle flows, and automatic multi-region assignment.
 
 servers:
   - url: http://localhost:8080
@@ -425,7 +425,7 @@ paths:
   /api/v1/billing/checkout:
     post:
       tags: [Billing]
-      summary: Create a Stripe checkout session for a paid plan
+      summary: Create a checkout session for a paid plan
       description: Requires `billing.write` permission.
       security:
         - BearerAuth: []
@@ -473,7 +473,7 @@ paths:
   /api/v1/billing/portal:
     post:
       tags: [Billing]
-      summary: Create a Stripe billing portal session
+      summary: Create a billing portal session
       description: Requires `billing.read` permission.
       security:
         - BearerAuth: []
@@ -512,6 +512,39 @@ paths:
       description: Accepts Stripe webhook events, verifies signatures, and applies idempotent subscription synchronization.
       parameters:
         - name: Stripe-Signature
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Webhook accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  received:
+                    type: boolean
+                    example: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/webhooks/lemonsqueezy:
+    post:
+      tags: [Billing]
+      summary: LemonSqueezy webhook endpoint
+      description: Accepts LemonSqueezy webhook events, verifies HMAC-SHA256 signatures, and applies idempotent subscription synchronization. Handles order_created, subscription_created, subscription_updated, subscription_expired, subscription_cancelled, and subscription_payment_success events.
+      parameters:
+        - name: X-Signature
           in: header
           required: true
           schema:
@@ -2782,7 +2815,8 @@ components:
       properties:
         provider:
           type: string
-          example: stripe
+          enum: [stripe, lemonsqueezy]
+          example: lemonsqueezy
         plan:
           type: string
           enum: [free, pro, enterprise]
@@ -2818,6 +2852,11 @@ components:
           type: string
           format: date-time
           nullable: true
+        portal_url:
+          type: string
+          format: uri
+          nullable: true
+          description: Customer portal URL (stored from LemonSqueezy webhooks; Stripe generates dynamic sessions).
         cancel_at_period_end:
           type: boolean
 
