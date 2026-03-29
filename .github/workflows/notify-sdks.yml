@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        repo: [togul-go, togul-php, togul-laravel, togul-ruby]
+        repo: [togul-go, togul-php, togul-laravel, togul-ruby, togul-js]
     steps:
       - name: Extract version from PR title
         id: version
