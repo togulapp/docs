@@ -5,7 +5,7 @@ info:
   description: Feature flag management API with organization-scoped permission-based authorization, project-based resource grouping, machine-authenticated evaluation, multi-provider billing (Stripe and LemonSqueezy), lifecycle flows, and automatic multi-region assignment.
 
 servers:
-  - url: http://localhost:8080
+  - url: https://api.togul.io
     description: Local development
 
 tags:
