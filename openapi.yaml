@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Togul Feature Flag API
-  version: 1.14.0
+  version: 1.15.0
   description: Feature flag management API with organization-scoped permission-based authorization, project-based resource grouping, machine-authenticated evaluation, multi-provider billing (Stripe and LemonSqueezy), lifecycle flows, and automatic multi-region assignment.
 
 servers:
@@ -31,6 +31,8 @@ tags:
     description: Subscription and billing management
   - name: Exports
     description: Data export management
+  - name: Audit Logs
+    description: Audit log listing and filtering
   - name: Account Lifecycle
     description: Account deletion request tracking
   - name: Environments
@@ -570,6 +572,91 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/audit-logs:
+    get:
+      tags: [Audit Logs]
+      summary: List audit logs for the current organization
+      description: |
+        Requires `audit.read` permission.
+        Returns paginated audit log entries ordered by creation time (newest first).
+        Supports filtering by project, environment, entity type, entity ID, action, and actor.
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: project_id
+          schema:
+            type: string
+            format: uuid
+          description: Filter by project ID.
+        - in: query
+          name: environment_id
+          schema:
+            type: string
+            format: uuid
+          description: Filter by environment ID.
+        - in: query
+          name: entity_type
+          schema:
+            type: string
+          description: Filter by entity type (e.g. `flag`, `rule`, `environment`).
+          example: flag
+        - in: query
+          name: entity_id
+          schema:
+            type: string
+            format: uuid
+          description: Filter by a specific entity ID.
+        - in: query
+          name: action
+          schema:
+            type: string
+          description: Filter by action type (e.g. `create`, `update`, `delete`).
+          example: update
+        - in: query
+          name: actor_id
+          schema:
+            type: string
+          description: Filter by actor ID (user ID).
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+          description: Maximum number of entries to return.
+        - in: query
+          name: offset
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+          description: Number of entries to skip for pagination.
+      responses:
+        "200":
+          description: Audit logs listed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  logs:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AuditLog"
+                  total:
+                    type: integer
+                    format: int64
+                  limit:
+                    type: integer
+                  offset:
+                    type: integer
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /api/v1/exports/audit:
     post:
@@ -2889,6 +2976,58 @@ components:
           type: string
           format: date-time
         updated_at:
+          type: string
+          format: date-time
+
+    AuditLog:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        organization_id:
+          type: string
+          format: uuid
+          nullable: true
+        actor_type:
+          type: string
+          example: user
+        actor_id:
+          type: string
+          nullable: true
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        action:
+          type: string
+          example: update
+        entity_type:
+          type: string
+          example: flag
+        entity_id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+          format: uuid
+          nullable: true
+        environment_id:
+          type: string
+          format: uuid
+          nullable: true
+        before_json:
+          type: string
+          nullable: true
+          description: JSON snapshot of the entity before the change.
+        after_json:
+          type: string
+          nullable: true
+          description: JSON snapshot of the entity after the change.
+        request_id:
+          type: string
+          nullable: true
+        ip_address:
+          type: string
+          nullable: true
+        created_at:
           type: string
           format: date-time
 
