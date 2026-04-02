@@ -441,7 +441,7 @@ paths:
               properties:
                 plan:
                   type: string
-                  enum: [pro, enterprise]
+                  enum: [pro, business]
                 success_url:
                   type: string
                   format: uri
@@ -506,6 +506,50 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "409":
           $ref: "#/components/responses/Conflict"
+
+  /api/v1/billing/spending-cap:
+    patch:
+      tags: [Billing]
+      summary: Update monthly spending cap
+      description: Sets or removes the monthly spending cap for usage-based plans. Requires `billing.write` permission.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                spending_cap_cents:
+                  type: integer
+                  format: int64
+                  nullable: true
+                  description: Monthly spending cap in cents. null removes the cap (unlimited).
+                  example: 5000
+      responses:
+        "200":
+          description: Spending cap updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  spending_cap_cents:
+                    type: integer
+                    format: int64
+                    nullable: true
+                  current_month_spend_cents:
+                    type: integer
+                    format: int64
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
 
   /api/v1/webhooks/stripe:
     post:
@@ -2817,13 +2861,18 @@ components:
         monthly_evaluations:
           type: integer
           format: int64
+        is_usage_based:
+          type: boolean
+        price_per_evaluation:
+          type: number
+          format: double
 
     BillingPlan:
       type: object
       properties:
         key:
           type: string
-          enum: [free, pro, enterprise]
+          enum: [trial, pro, business]
         name:
           type: string
         price:
@@ -2847,7 +2896,7 @@ components:
       properties:
         key:
           type: string
-          enum: [free, pro, enterprise]
+          enum: [trial, pro, business]
         name:
           type: string
         price:
@@ -2906,7 +2955,7 @@ components:
           example: lemonsqueezy
         plan:
           type: string
-          enum: [free, pro, enterprise]
+          enum: [trial, pro, business]
         status:
           type: string
           enum: [active, trialing, past_due, canceled, suspended]
@@ -2946,6 +2995,27 @@ components:
           description: Customer portal URL (stored from LemonSqueezy webhooks; Stripe generates dynamic sessions).
         cancel_at_period_end:
           type: boolean
+        is_usage_based:
+          type: boolean
+        trial_ends_at:
+          type: string
+          format: date-time
+          nullable: true
+        trial_expired:
+          type: boolean
+        spending_cap_cents:
+          type: integer
+          format: int64
+          nullable: true
+        current_month_evaluations:
+          type: integer
+          format: int64
+        current_month_spend_cents:
+          type: integer
+          format: int64
+        price_per_evaluation:
+          type: number
+          format: double
 
     DataExport:
       type: object
