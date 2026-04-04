@@ -441,7 +441,7 @@ paths:
               properties:
                 plan:
                   type: string
-                  enum: [pro, business]
+                  description: The slug of a paid plan to check out (e.g. "pro"). Available paid plan slugs can be retrieved from GET /api/v1/billing/plans.
                 success_url:
                   type: string
                   format: uri
@@ -507,11 +507,33 @@ paths:
         "409":
           $ref: "#/components/responses/Conflict"
 
-  /api/v1/billing/spending-cap:
-    patch:
+  /api/v1/admin/plans:
+    get:
       tags: [Billing]
-      summary: Update monthly spending cap
-      description: Sets or removes the monthly spending cap for usage-based plans. Requires `billing.write` permission.
+      summary: List all plans (admin)
+      description: Returns all plans including inactive ones. Requires `admin` role.
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: List of plans
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  plans:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Plan"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Billing]
+      summary: Create a plan (admin)
+      description: Creates a new billing plan. Requires `admin` role.
       security:
         - BearerAuth: []
       requestBody:
@@ -519,37 +541,84 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                spending_cap_cents:
-                  type: integer
-                  format: int64
-                  nullable: true
-                  description: Monthly spending cap in cents. null removes the cap (unlimited).
-                  example: 5000
+              $ref: "#/components/schemas/PlanInput"
       responses:
         "200":
-          description: Spending cap updated
+          description: Plan created
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  spending_cap_cents:
-                    type: integer
-                    format: int64
-                    nullable: true
-                  current_month_spend_cents:
-                    type: integer
-                    format: int64
+                  plan:
+                    $ref: "#/components/schemas/Plan"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/admin/plans/{id}:
+    put:
+      tags: [Billing]
+      summary: Update a plan (admin)
+      description: Partially updates an existing plan. Requires `admin` role.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlanUpdate"
+      responses:
+        "200":
+          description: Plan updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  plan:
+                    $ref: "#/components/schemas/Plan"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
-        "500":
-          $ref: "#/components/responses/InternalServerError"
+    delete:
+      tags: [Billing]
+      summary: Deactivate a plan (admin)
+      description: Soft-deletes a plan by setting is_active to false. Requires `admin` role.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Plan deactivated
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /api/v1/webhooks/stripe:
     post:
@@ -2506,6 +2575,160 @@ components:
       description: The project (workspace) ID
 
   schemas:
+    Plan:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+          description: Unique identifier used as the plan key (e.g. "trial", "pro")
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        is_paid:
+          type: boolean
+        is_recommended:
+          type: boolean
+        display_order:
+          type: integer
+        is_active:
+          type: boolean
+        stripe_price_id:
+          type: string
+          nullable: true
+        lemonsqueezy_variant_id:
+          type: string
+          nullable: true
+        limit_environments:
+          type: integer
+          description: Maximum environments allowed. 0 = unlimited.
+        limit_flags:
+          type: integer
+          description: Maximum flags allowed. 0 = unlimited.
+        limit_seats:
+          type: integer
+          description: Maximum seats allowed. 0 = unlimited.
+        limit_monthly_evaluations:
+          type: integer
+          format: int64
+          description: Maximum monthly evaluations allowed. 0 = unlimited.
+        price_amount:
+          type: integer
+          description: Price in the smallest currency unit (e.g. cents). 0 for trial plans.
+        price_currency:
+          type: string
+          description: ISO 4217 currency code (e.g. "usd")
+        price_interval:
+          type: string
+          nullable: true
+          description: Billing interval ("month" or "year"). Null for trial plans.
+        price_interval_count:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    PlanInput:
+      type: object
+      required: [slug, name]
+      properties:
+        slug:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        is_paid:
+          type: boolean
+          default: false
+        is_recommended:
+          type: boolean
+          default: false
+        display_order:
+          type: integer
+          default: 0
+        stripe_price_id:
+          type: string
+          nullable: true
+        lemonsqueezy_variant_id:
+          type: string
+          nullable: true
+        limit_environments:
+          type: integer
+          default: 0
+        limit_flags:
+          type: integer
+          default: 0
+        limit_seats:
+          type: integer
+          default: 0
+        limit_monthly_evaluations:
+          type: integer
+          format: int64
+          default: 0
+        price_amount:
+          type: integer
+          default: 0
+        price_currency:
+          type: string
+          default: usd
+        price_interval:
+          type: string
+          nullable: true
+        price_interval_count:
+          type: integer
+          default: 1
+
+    PlanUpdate:
+      type: object
+      description: All fields are optional. Only provided fields are updated.
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        is_paid:
+          type: boolean
+        is_recommended:
+          type: boolean
+        display_order:
+          type: integer
+        is_active:
+          type: boolean
+        stripe_price_id:
+          type: string
+          nullable: true
+        lemonsqueezy_variant_id:
+          type: string
+          nullable: true
+        limit_environments:
+          type: integer
+        limit_flags:
+          type: integer
+        limit_seats:
+          type: integer
+        limit_monthly_evaluations:
+          type: integer
+          format: int64
+        price_amount:
+          type: integer
+        price_currency:
+          type: string
+        price_interval:
+          type: string
+          nullable: true
+        price_interval_count:
+          type: integer
+
     User:
       type: object
       properties:
@@ -2861,18 +3084,13 @@ components:
         monthly_evaluations:
           type: integer
           format: int64
-        is_usage_based:
-          type: boolean
-        price_per_evaluation:
-          type: number
-          format: double
 
     BillingPlan:
       type: object
       properties:
         key:
           type: string
-          enum: [trial, pro, business]
+          enum: [trial, pro, enterprise]
         name:
           type: string
         price:
@@ -2896,7 +3114,7 @@ components:
       properties:
         key:
           type: string
-          enum: [trial, pro, business]
+          enum: [trial, pro, enterprise]
         name:
           type: string
         price:
@@ -2955,10 +3173,10 @@ components:
           example: lemonsqueezy
         plan:
           type: string
-          enum: [trial, pro, business]
+          enum: [trial, pro, enterprise]
         status:
           type: string
-          enum: [active, trialing, past_due, canceled, suspended]
+          enum: [active, trialing, past_due, canceled, suspended, trial_expired]
         seats:
           type: integer
         used_seats:
@@ -2995,27 +3213,16 @@ components:
           description: Customer portal URL (stored from LemonSqueezy webhooks; Stripe generates dynamic sessions).
         cancel_at_period_end:
           type: boolean
-        is_usage_based:
-          type: boolean
+        trial_started_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the trial period started. Null for paid subscriptions.
         trial_ends_at:
           type: string
           format: date-time
           nullable: true
-        trial_expired:
-          type: boolean
-        spending_cap_cents:
-          type: integer
-          format: int64
-          nullable: true
-        current_month_evaluations:
-          type: integer
-          format: int64
-        current_month_spend_cents:
-          type: integer
-          format: int64
-        price_per_evaluation:
-          type: number
-          format: double
+          description: When the trial period ends or ended. Null for paid subscriptions.
 
     DataExport:
       type: object
